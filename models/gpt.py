@@ -53,7 +53,7 @@ class SelfAttention(nn.Module):
         self.dropout = nn.Dropout(self.dropout)
         self.attn_scale = 1 / sqrt(self.head_dim)
 
-    # TODO: add attention mask
+    # TODO: add attention mask. Think we can do by expanding two dims between existing, then adding to causal
     def forward(
         self, x: torch.FloatTensor, mask: Optional[torch.BoolTensor] = None
     ) -> torch.FloatTensor:
@@ -68,6 +68,7 @@ class SelfAttention(nn.Module):
         attn_logits = (q @ k) * self.scale
         attn_scores = F.softmax(attn_logits, dim=-1)
 
+        # TODO: should be this tril?
         causal_mask = 1e9 * (torch.triu(torch.ones(x.shape[1], x.shape[1])) - 1.0)
         causal_mask = einops.repeat(
             causal_mask, "i j -> N h i j", N=x.shape[0], h=self.heads
