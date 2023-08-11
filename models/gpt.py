@@ -180,8 +180,8 @@ class TransformerDecoderLM(nn.Module):
         position_ids: torch.LongTensor,
         mask: Optional[torch.BoolTensor] = None,
     ):
-        x = self.input_embeddings(x) + self.position_embeddings(x)
-        x = self.decoder(x)
+        x = self.input_embeddings(input_ids) + self.position_embeddings(position_ids)
+        x = self.decoder(x, mask=mask)
         x = self.norm_out(x)
 
         return self.lm_head(x)
