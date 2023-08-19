@@ -13,8 +13,8 @@ from models import TransformerDecoderLM
 
 
 def main(args: SimpleNamespace):
-    batch_size = 8
-    epochs = 1
+    batch_size = 32
+    epochs = 4
     sequence_length = 512
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -30,6 +30,7 @@ def main(args: SimpleNamespace):
         max_position_embeddings=sequence_length,
     ).to(device)
     model.train()
+    # model = torch.compile(model)
 
     optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
@@ -40,7 +41,13 @@ def main(args: SimpleNamespace):
     )
     # validation_dataset = transform_dataset(validation_dataset, tokenizer, max_length=sequence_length)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=4,
+        pin_memory=True,
+    )
     # validation_loader = DataLoader(validation_dataset, batch_size=batch_size, shuffle=False)
 
     for ei in range(epochs):
@@ -51,7 +58,7 @@ def main(args: SimpleNamespace):
             optim.zero_grad()
             input_ids, attention_mask = (
                 batch["input_ids"],
-                batch["attention_mask"][:, -1],
+                batch["attention_mask"][:, :-1],
             )
             input_ids, targets = input_ids[:, :-1].clone(), input_ids[:, 1:].clone()
             targets[targets == tokenizer.pad_token_id] = -100
@@ -62,11 +69,13 @@ def main(args: SimpleNamespace):
             )
 
             batch = dict(
-                input_ids=input_ids.to(device),
-                position_ids=position_ids.to(device),
-                mask=~attention_mask.to(dtype=torch.bool, device=device),
+                input_ids=input_ids.to(device, non_blocking=True),
+                position_ids=position_ids.to(device, non_blocking=True),
+                mask=~attention_mask.to(
+                    dtype=torch.bool, device=device, non_blocking=True
+                ),
             )
-            targets = targets.to(device)
+            targets = targets.to(device, non_blocking=True)
             logits = model(**batch)
 
             loss = F.cross_entropy(

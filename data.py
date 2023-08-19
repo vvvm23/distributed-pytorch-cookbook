@@ -8,7 +8,7 @@ def get_dataset(
     name: str = "roneneldan/TinyStories", slice_size: Optional[Union[str, int]] = None
 ):
     train_dataset = datasets.load_dataset(
-        name, split=f"train[:{slice_size}]" if slice_size is not None else None
+        name, split=f"train[:{slice_size}]" if slice_size is not None else "train"
     )
     validation_dataset = datasets.load_dataset(name, split="validation")
     return train_dataset, validation_dataset
