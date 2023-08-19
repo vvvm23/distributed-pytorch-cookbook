@@ -8,15 +8,22 @@ import torch.nn.functional as F
 
 
 class FeedForward(nn.Module):
-    dim: int
-    mult: int = 4
-    activation: Callable = F.relu
-    out_dim: Optional[int] = None
-    bias: bool = True
-    dropout: float = 0.0
-
-    def __init__(self):
+    def __init__(
+        self,
+        dim: int,
+        mult: int = 4,
+        activation: Callable = F.relu,
+        out_dim: Optional[int] = None,
+        bias: bool = True,
+        dropout: float = 0.0,
+    ):
         super().__init__()
+        self.dim = dim
+        self.mult = mult
+        self.activation = activation
+        self.out_dim = out_dim
+        self.bias = bias
+        self.dropout = dropout
 
         self.out_dim = self.dim if self.out_dim is None else self.out_dim
         self.up_proj = nn.Linear(self.dim, self.dim * self.mult, bias=self.bias)
@@ -35,15 +42,20 @@ class FeedForward(nn.Module):
 
 
 class SelfAttention(nn.Module):
-    dim: int
-    head_dim: int
-    heads: int
-
-    qkv_bias: bool = False
-    dropout: float = 0.0
-
-    def __init__(self):
+    def __init__(
+        self,
+        dim: int,
+        head_dim: int,
+        heads: int,
+        qkv_bias: bool = False,
+        dropout: float = 0.0,
+    ):
         super().__init__()
+        self.dim = dim
+        self.head_dim = head_dim
+        self.heads = heads
+        self.qkv_bias = qkv_bias
+        self.dropout = dropout
 
         self.to_q = nn.Linear(self.dim, self.head_dim * self.heads, bias=self.qkv_bias)
         self.to_k = nn.Linear(self.dim, self.head_dim * self.heads, bias=self.qkv_bias)
@@ -58,17 +70,19 @@ class SelfAttention(nn.Module):
     ) -> torch.FloatTensor:
         q = self.to_q(x)
         k = self.to_k(x)
-        v = self.to_k(v)
+        v = self.to_v(x)
 
-        q = einops.rearrange(q, "N S (h d) -> N h S d")
-        k = einops.rearrange(k, "N S (h d) -> N h d S")
-        v = einops.rearrange(v, "N S (h d) -> N h S d")
+        q = einops.rearrange(q, "N S (h d) -> N h S d", h=self.heads)
+        k = einops.rearrange(k, "N S (h d) -> N h d S", h=self.heads)
+        v = einops.rearrange(v, "N S (h d) -> N h S d", h=self.heads)
 
-        attn_logits = (q @ k) * self.scale
+        attn_logits = (q @ k) * self.attn_scale
         attn_scores = F.softmax(attn_logits, dim=-1)
 
         # TODO: check direction of this mask
-        causal_mask = 1e9 * (torch.tril(torch.ones(x.shape[1], x.shape[1])) - 1.0)
+        causal_mask = 1e9 * (torch.triu(torch.ones(x.shape[1], x.shape[1])) - 1.0).to(
+            x.device
+        )
         causal_mask = einops.repeat(
             causal_mask, "i j -> N h i j", N=x.shape[0], h=self.heads
         )
@@ -87,13 +101,12 @@ class SelfAttention(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    dim: int
-    head_dim: int
-    heads: int
-    dropout: float = 0.0
-
-    def __init__(self):
+    def __init__(self, dim: int, head_dim: int, heads: int, dropout: float = 0.0):
         super().__init__()
+        self.dim = dim
+        self.head_dim = head_dim
+        self.heads = heads
+        self.dropout = dropout
 
         self.attn = SelfAttention(
             dim=self.dim, head_dim=self.head_dim, heads=self.heads, dropout=self.dropout
@@ -118,15 +131,15 @@ class DecoderLayer(nn.Module):
 
 
 class TransformerDecoder(nn.Module):
-    dim: int
-    head_dim: int
-    heads: int
-    num_layers: int
-
-    dropout: float = 0.0
-
-    def __init__(self):
+    def __init__(
+        self, dim: int, head_dim: int, heads: int, num_layers: int, dropout: float = 0.0
+    ):
         super().__init__()
+        self.dim = dim
+        self.head_dim = head_dim
+        self.heads = heads
+        self.num_layers = num_layers
+        self.dropout = dropout
 
         self.layers = nn.ModuleList(
             [
@@ -150,17 +163,24 @@ class TransformerDecoder(nn.Module):
 
 
 class TransformerDecoderLM(nn.Module):
-    dim: int
-    head_dim: int
-    heads: int
-    num_layers: int
-    vocab_size: int
-    max_position_embeddings: int
-
-    dropout: float = 0.0
-
-    def __init__(self):
+    def __init__(
+        self,
+        dim: int,
+        head_dim: int,
+        heads: int,
+        num_layers: int,
+        vocab_size: int,
+        max_position_embeddings: int,
+        dropout: float = 0.0,
+    ):
         super().__init__()
+        self.dim = dim
+        self.head_dim = head_dim
+        self.heads = heads
+        self.num_layers = num_layers
+        self.vocab_size = vocab_size
+        self.max_position_embeddings = max_position_embeddings
+        self.dropout = dropout
 
         self.input_embeddings = nn.Embedding(self.vocab_size, self.dim)
         self.position_embeddings = nn.Embedding(self.max_position_embeddings, self.dim)
