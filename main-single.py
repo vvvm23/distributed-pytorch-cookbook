@@ -37,13 +37,15 @@ def generate(
     model: TransformerDecoderLM,
     prompt: str,
     tokenizer: GPT2Tokenizer,
+    device: torch.device,
     max_new_tokens: int = 20,
 ):
-    batch = tokenizer([prompt], truncation=True, max_length=512, return_tensors="pt")
+    batch = tokenizer([prompt], truncation=True, max_length=256, return_tensors="pt")
     input_ids = batch["input_ids"]
     sequence_length = input_ids.shape[1]
     position_ids = torch.arange(sequence_length).unsqueeze(0)
 
+    input_ids, position_ids = input_ids.to(device), position_ids.to(device)
     for _ in range(max_new_tokens):
         logits = model(input_ids=input_ids, position_ids=position_ids)
         new_token = logits[0, -1].argmax(dim=-1)
@@ -52,13 +54,13 @@ def generate(
             break
 
         input_ids = torch.cat(
-            [input_ids, torch.tensor(new_token, dtype=input_ids.dtype).unsqueeze(0)],
+            [input_ids, torch.tensor([new_token], dtype=input_ids.dtype).to(device).unsqueeze(0)],
             dim=1,
         )
         position_ids = torch.cat(
             [
                 position_ids,
-                torch.tensor(sequence_length, dtype=position_ids.dtype).unsqueeze(0),
+                torch.tensor([sequence_length], dtype=position_ids.dtype).to(device).unsqueeze(0),
             ],
             dim=1,
         )
@@ -69,9 +71,9 @@ def generate(
 
 
 def main(args: SimpleNamespace):
-    batch_size = 32
+    batch_size = 128
     epochs = 4
-    sequence_length = 512
+    sequence_length = 256
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = get_tokenizer()
@@ -152,19 +154,19 @@ def main(args: SimpleNamespace):
                 logits, targets = logits.view(-1, model.vocab_size), targets.view(-1)
                 loss = F.cross_entropy(logits, targets, ignore_index=-100)
 
-                accuracy = (logits.argmax(dim=-1) == targets).mean() * 100.0
+                accuracy = (logits.argmax(dim=-1) == targets).float().mean() * 100.0
 
                 total_loss += loss.item()
-                accuracy += total_accuracy.item()
+                total_accuracy += accuracy
 
                 pb.set_description(
                     f"[validation] Epoch {ei+1}/{epochs} | loss: {total_loss / (i+1):.3f}, accuracy: {total_accuracy / (i+1):.2f}"
                 )
 
             print("Argmax sampling from model")
-            print(generate(model, "The big brown cat ", tokenizer))
-            print(generate(model, "One day, ", tokenizer))
-            print(generate(model, "She said ", tokenizer))
+            print(generate(model, "The big brown cat ", tokenizer, device))
+            print(generate(model, "One day, ", tokenizer, device))
+            print(generate(model, "She said ", tokenizer, device))
 
 
 if __name__ == "__main__":

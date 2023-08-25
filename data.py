@@ -29,6 +29,6 @@ def transform_dataset(dataset, tokenizer, max_length: int = 512):
             truncation=True,
         )
 
-    dataset = dataset.map(_tokenize, batched=True, remove_columns=["text"])
+    dataset = dataset.map(_tokenize, batched=True, remove_columns=["text"], num_proc=8)
     dataset.set_format("pt")
     return dataset
