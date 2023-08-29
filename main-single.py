@@ -54,13 +54,20 @@ def generate(
             break
 
         input_ids = torch.cat(
-            [input_ids, torch.tensor([new_token], dtype=input_ids.dtype).to(device).unsqueeze(0)],
+            [
+                input_ids,
+                torch.tensor([new_token], dtype=input_ids.dtype)
+                .to(device)
+                .unsqueeze(0),
+            ],
             dim=1,
         )
         position_ids = torch.cat(
             [
                 position_ids,
-                torch.tensor([sequence_length], dtype=position_ids.dtype).to(device).unsqueeze(0),
+                torch.tensor([sequence_length], dtype=position_ids.dtype)
+                .to(device)
+                .unsqueeze(0),
             ],
             dim=1,
         )
@@ -71,9 +78,10 @@ def generate(
 
 
 def main(args: SimpleNamespace):
-    batch_size = 128
+    batch_size = 64
     epochs = 4
     sequence_length = 256
+    print_freq = 8
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = get_tokenizer()
@@ -88,10 +96,10 @@ def main(args: SimpleNamespace):
         max_position_embeddings=sequence_length,
     ).to(device)
 
-    if torch.cuda.is_available():
-        model = model.to(torch.bfloat16)
+    # if torch.cuda.is_available():
+    # model = model.to(torch.bfloat16)
     model.train()
-    # model = torch.compile(model)
+    model = torch.compile(model)
 
     optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
@@ -119,6 +127,8 @@ def main(args: SimpleNamespace):
         pin_memory=True,
     )
 
+    scaler = torch.cuda.amp.GradScaler()
+
     for ei in range(epochs):
         pb = tqdm(train_loader)
         pb.set_description(f"[training] Epoch {ei+1}/{epochs} | loss: 0.000")
@@ -127,18 +137,24 @@ def main(args: SimpleNamespace):
         for i, batch in enumerate(pb):
             optim.zero_grad()
             batch, targets = prepare_batch(batch, tokenizer.pad_token_id, device)
-            logits = model(**batch)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                logits = model(**batch)
 
-            loss = F.cross_entropy(
-                logits.view(-1, model.vocab_size), targets.view(-1), ignore_index=-100
-            )
-            loss.backward()
-            optim.step()
+                loss = F.cross_entropy(
+                    logits.view(-1, model.vocab_size),
+                    targets.view(-1),
+                    ignore_index=-100,
+                )
+
+            scaler.scale(loss).backward()
+            scaler.step(optim)
+            scaler.update()
+            # optim.step()
 
             total_loss += loss.item()
-            if i > 0 and not i % 32:
+            if i > 0 and not i % print_freq:
                 pb.set_description(
-                    f"[training] Epoch {ei+1}/{epochs} | loss: {total_loss / 32:.3f}"
+                    f"[training] Epoch {ei+1}/{epochs} | loss: {total_loss / print_freq:.3f}"
                 )
                 total_loss = 0.0
 

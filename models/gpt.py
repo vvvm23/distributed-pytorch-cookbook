@@ -81,7 +81,7 @@ class SelfAttention(nn.Module):
 
         # TODO: cache mask? slice to correct size
         # TODO: check direction of this mask
-        causal_mask = 1e9 * (torch.triu(torch.ones(x.shape[1], x.shape[1])) - 1.0).to(
+        causal_mask = 1e9 * (torch.tril(torch.ones(x.shape[1], x.shape[1])) - 1.0).to(
             device=x.device, dtype=attn_scores.dtype
         )
         causal_mask = einops.repeat(
