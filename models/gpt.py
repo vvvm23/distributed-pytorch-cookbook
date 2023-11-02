@@ -77,20 +77,22 @@ class SelfAttention(nn.Module):
         v = einops.rearrange(v, "N S (h d) -> N h S d", h=self.heads)
 
         attn_logits = (q @ k) * self.attn_scale
-        attn_scores = F.softmax(attn_logits, dim=-1)
 
         # TODO: cache mask? slice to correct size
         # TODO: check direction of this mask
         causal_mask = 1e9 * (torch.tril(torch.ones(x.shape[1], x.shape[1])) - 1.0).to(
-            device=x.device, dtype=attn_scores.dtype
+            device=x.device, dtype=attn_logits.dtype
         )
         causal_mask = einops.repeat(
             causal_mask, "i j -> N h i j", N=x.shape[0], h=self.heads
         )
 
-        attn_scores = attn_scores + causal_mask
+        attn_logits = attn_logits + causal_mask
         if mask is not None:
-            attn_scores = attn_scores.masked_fill(mask.unsqueeze(1).unsqueeze(1), 1e-9)
+            # attn_logits = attn_logits.masked_fill(mask.unsqueeze(1).unsqueeze(1), -1e9)
+            attn_logits = attn_logits.masked_fill(mask[:, None, None, :], torch.finfo(attn_logits.dtype).min)
+
+        attn_scores = F.softmax(attn_logits, dim=-1)
 
         attn_outputs = attn_scores @ v
         attn_outputs = einops.rearrange(attn_outputs, "N h S d -> N S (h d)")

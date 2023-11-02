@@ -33,6 +33,7 @@ def prepare_batch(batch, pad_id, device):
     return batch, targets
 
 
+@torch.inference_mode()
 def generate(
     model: TransformerDecoderLM,
     prompt: str,
@@ -96,14 +97,12 @@ def main(args: SimpleNamespace):
         max_position_embeddings=sequence_length,
     ).to(device)
 
-    # if torch.cuda.is_available():
-    # model = model.to(torch.bfloat16)
     model.train()
     model = torch.compile(model)
 
     optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
-    train_dataset, validation_dataset = get_dataset()
+    train_dataset, validation_dataset = get_dataset(slice_size="10%")
 
     train_dataset = transform_dataset(
         train_dataset, tokenizer, max_length=sequence_length
@@ -158,17 +157,18 @@ def main(args: SimpleNamespace):
                 )
                 total_loss = 0.0
 
+        model.eval()
         with torch.no_grad():
-            model.eval()
             pb = tqdm(validation_loader)
             pb.set_description(f"[validation] Epoch {ei+1}/{epochs} | loss: 0.000")
             total_loss, total_accuracy = 0.0, 0.0
             for i, batch in enumerate(pb):
                 batch, targets = prepare_batch(batch, tokenizer.pad_token_id, device)
-                logits = model(**batch)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    logits = model(**batch)
 
-                logits, targets = logits.view(-1, model.vocab_size), targets.view(-1)
-                loss = F.cross_entropy(logits, targets, ignore_index=-100)
+                    logits, targets = logits.view(-1, model.vocab_size), targets.view(-1)
+                    loss = F.cross_entropy(logits, targets, ignore_index=-100)
 
                 accuracy = (logits.argmax(dim=-1) == targets).float().mean() * 100.0
 
