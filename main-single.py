@@ -79,64 +79,61 @@ def generate(
 
 
 def main(args: SimpleNamespace):
-    batch_size = 64
-    epochs = 4
-    sequence_length = 256
-    print_freq = 8
+    PRINT_FREQ = 8
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = get_tokenizer()
     tokenizer.pad_token_id = 2
 
     model = TransformerDecoderLM(
-        dim=256,
-        head_dim=32,
-        heads=8,
-        num_layers=8,
+        dim=args.dim,
+        head_dim=args.head_dim,
+        heads=args.heads,
+        num_layers=args.num_layers,
         vocab_size=tokenizer.vocab_size,
-        max_position_embeddings=sequence_length,
+        max_position_embeddings=args.sequence_length,
     ).to(device)
 
     model.train()
     model = torch.compile(model)
 
-    optim = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    optim = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
-    train_dataset, validation_dataset = get_dataset(slice_size="10%")
+    train_dataset, validation_dataset = get_dataset(slice_size=args.dataset_slice)
 
     train_dataset = transform_dataset(
-        train_dataset, tokenizer, max_length=sequence_length
+        train_dataset, tokenizer, max_length=args.sequence_length, num_proc=args.num_workers
     )
     validation_dataset = transform_dataset(
-        validation_dataset, tokenizer, max_length=sequence_length
+        validation_dataset, tokenizer, max_length=args.sequence_length, num_proc=args.num_workers
     )
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=batch_size,
+        batch_size=args.batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=args.num_workers,
         pin_memory=True,
     )
     validation_loader = DataLoader(
         validation_dataset,
-        batch_size=batch_size,
+        batch_size=args.batch_size,
         shuffle=False,
-        num_workers=4,
+        num_workers=args.num_workers,
         pin_memory=True,
     )
 
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.cuda.amp.GradScaler(enabled=not args.disable_amp)
 
-    for ei in range(epochs):
+    for ei in range(args.epochs):
         pb = tqdm(train_loader)
-        pb.set_description(f"[training] Epoch {ei+1}/{epochs} | loss: 0.000")
+        pb.set_description(f"[training] Epoch {ei+1}/{args.epochs} | loss: ?????")
         total_loss = 0.0
         model.train()
         for i, batch in enumerate(pb):
             optim.zero_grad()
             batch, targets = prepare_batch(batch, tokenizer.pad_token_id, device)
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=not args.disable_amp):
                 logits = model(**batch)
 
                 loss = F.cross_entropy(
@@ -151,16 +148,16 @@ def main(args: SimpleNamespace):
             # optim.step()
 
             total_loss += loss.item()
-            if i > 0 and not i % print_freq:
+            if i > 0 and not i % PRINT_FREQ:
                 pb.set_description(
-                    f"[training] Epoch {ei+1}/{epochs} | loss: {total_loss / print_freq:.3f}"
+                    f"[training] Epoch {ei+1}/{args.epochs} | loss: {total_loss / PRINT_FREQ:.3f}"
                 )
                 total_loss = 0.0
 
         model.eval()
         with torch.no_grad():
             pb = tqdm(validation_loader)
-            pb.set_description(f"[validation] Epoch {ei+1}/{epochs} | loss: 0.000")
+            pb.set_description(f"[validation] Epoch {ei+1}/{args.epochs} | loss: 0.000")
             total_loss, total_accuracy = 0.0, 0.0
             for i, batch in enumerate(pb):
                 batch, targets = prepare_batch(batch, tokenizer.pad_token_id, device)
@@ -176,7 +173,7 @@ def main(args: SimpleNamespace):
                 total_accuracy += accuracy
 
                 pb.set_description(
-                    f"[validation] Epoch {ei+1}/{epochs} | loss: {total_loss / (i+1):.3f}, accuracy: {total_accuracy / (i+1):.2f}"
+                    f"[validation] Epoch {ei+1}/{args.epochs} | loss: {total_loss / (i+1):.3f}, accuracy: {total_accuracy / (i+1):.2f}"
                 )
 
             print("Argmax sampling from model")
@@ -186,4 +183,18 @@ def main(args: SimpleNamespace):
 
 
 if __name__ == "__main__":
-    main(None)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--sequence_length", type=int, default=256)
+    parser.add_argument("--dim", type=int, default=256)
+    parser.add_argument("--head_dim", type=int, default=32)
+    parser.add_argument("--heads", type=int, default=8)
+    parser.add_argument("--num_layers", type=int, default=8)
+    parser.add_argument("--learning_rate", type=float, default=1e-4)
+    parser.add_argument("--dataset_slice", type=str, default="100%")
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--disable_amp", action='store_true')
+
+    args = parser.parse_args()
+    main(args)

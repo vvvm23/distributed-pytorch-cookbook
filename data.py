@@ -20,7 +20,7 @@ def get_tokenizer(name: str = "roneneldan/TinyStories-1M", max_length: int = 512
     return tokenizer
 
 
-def transform_dataset(dataset, tokenizer, max_length: int = 512):
+def transform_dataset(dataset, tokenizer, max_length: int = 512, num_proc: int = 8):
     def _tokenize(example):
         return tokenizer(
             example["text"],
@@ -29,6 +29,6 @@ def transform_dataset(dataset, tokenizer, max_length: int = 512):
             truncation=True,
         )
 
-    dataset = dataset.map(_tokenize, batched=True, remove_columns=["text"], num_proc=8)
+    dataset = dataset.map(_tokenize, batched=True, remove_columns=["text"], num_proc=num_proc)
     dataset.set_format("pt")
     return dataset
