@@ -90,7 +90,9 @@ class SelfAttention(nn.Module):
         attn_logits = attn_logits + causal_mask
         if mask is not None:
             # attn_logits = attn_logits.masked_fill(mask.unsqueeze(1).unsqueeze(1), -1e9)
-            attn_logits = attn_logits.masked_fill(mask[:, None, None, :], torch.finfo(attn_logits.dtype).min)
+            attn_logits = attn_logits.masked_fill(
+                mask[:, None, None, :], torch.finfo(attn_logits.dtype).min
+            )
 
         attn_scores = F.softmax(attn_logits, dim=-1)
 
