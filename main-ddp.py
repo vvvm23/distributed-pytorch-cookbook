@@ -1,20 +1,24 @@
-# run with torchrun or torch elastic
+"""
+run with torchrun or torch elastic
+
+    torchrun --nnodes=<num_nodes> --nproc_per_node=<num_gpus_per_node> --rdzv_id=100 --rdzv_backend=c10d --rdzv_endpoint=<address>:<port> main-fsdp.py
+
+"""
 
 import argparse
 from types import SimpleNamespace
 
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
 from data import GPT2Tokenizer, get_dataset, get_tokenizer, transform_dataset
 from models import TransformerDecoderLM
+from utils import generate, prepare_batch
 
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
-
-from utils import prepare_batch, generate
 
 def init_mp():
     dist.init_process_group("nccl")
@@ -24,8 +28,10 @@ def init_mp():
 
     return rank, device_id
 
+
 def cleanup_mp():
     dist.destroy_process_group()
+
 
 def main(args: SimpleNamespace):
     PRINT_FREQ = 8
@@ -81,21 +87,21 @@ def main(args: SimpleNamespace):
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=True,
-        sampler=train_sampler
+        sampler=train_sampler,
     )
     validation_loader = DataLoader(
         validation_dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=True,
-        sampler=validation_sampler
+        sampler=validation_sampler,
     )
 
     # AMP for gradients. Pass --disable_amp to disable
     scaler = torch.cuda.amp.GradScaler(enabled=not args.disable_amp)
 
     for ei in range(args.epochs):
-        pb = tqdm(train_loader)
+        pb = tqdm(train_loader, disable=rank != 0)
         pb.set_description(f"[training] Epoch {ei+1}/{args.epochs} | loss: ?????")
         total_loss = 0.0
         model.train()
@@ -126,7 +132,7 @@ def main(args: SimpleNamespace):
 
         model.eval()
         with torch.no_grad():
-            pb = tqdm(validation_loader)
+            pb = tqdm(validation_loader, disable=rank != 0)
             pb.set_description(
                 f"[validation] Epoch {ei+1}/{args.epochs} | loss: ?????, accuracy: ?????"
             )
@@ -140,13 +146,16 @@ def main(args: SimpleNamespace):
                         -1
                     )
                     loss = F.cross_entropy(logits, targets, ignore_index=-100)
-dist.init_process_group("nccl")
-    rank = dist.get_rank()
+
                 # computes accuracy
                 target_mask = targets != -100
                 accuracy = (
                     logits.argmax(dim=-1)[target_mask] == targets[target_mask]
                 ).float().mean() * 100.0
+
+                # TODO: may need to wrap below in a tensor
+                dist.all_reduce(loss, op=dist.ReduceOp.AVG)
+                dist.all_reduce(accuracy, op=dist.ReduceOp.AVG)
 
                 total_loss += loss.item()
                 total_accuracy += accuracy
@@ -156,13 +165,16 @@ dist.init_process_group("nccl")
                 )
 
             # generate some example outputs from the current model
-            print("Argmax sampling from model")
-            print(generate(model, "The big brown cat ", tokenizer, device))
-            print(generate(model, "One day, ", tokenizer, device))
-            print(generate(model, "She said ", tokenizer, device))
+            if rank == 0:
+                print("Argmax sampling from model")
+                print(generate(model, "The big brown cat ", tokenizer, device))
+                print(generate(model, "One day, ", tokenizer, device))
+                print(generate(model, "She said ", tokenizer, device))
 
+            dist.barrier()
 
     cleanup_mp()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
