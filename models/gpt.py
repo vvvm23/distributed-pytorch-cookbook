@@ -166,6 +166,23 @@ class TransformerDecoder(nn.Module):
 
         return x
 
+class Embeddings(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        vocab_size: int,
+        max_position_embeddings: int
+    ):
+        super().__init__()
+        self.input_embeddings = nn.Embedding(vocab_size, self.dim)
+        self.position_embeddings = nn.Embedding(max_position_embeddings, self.dim)
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        position_ids: torch.LongTensor,
+    ):
+        return self.input_embeddings(input_ids) + self.position_embeddings(position_ids)
 
 class TransformerDecoderLM(nn.Module):
     def __init__(
@@ -187,8 +204,8 @@ class TransformerDecoderLM(nn.Module):
         self.max_position_embeddings = max_position_embeddings
         self.dropout = dropout
 
-        self.input_embeddings = nn.Embedding(self.vocab_size, self.dim)
-        self.position_embeddings = nn.Embedding(self.max_position_embeddings, self.dim)
+        self.embeddings = Embeddings(dim=self.dim, vocab_size=self.vocab_size,
+                                     max_position_embeddings=max_position_embeddings)
 
         self.decoder = TransformerDecoder(
             num_layers=self.num_layers,
@@ -207,7 +224,7 @@ class TransformerDecoderLM(nn.Module):
         position_ids: torch.LongTensor,
         mask: Optional[torch.BoolTensor] = None,
     ):
-        x = self.input_embeddings(input_ids) + self.position_embeddings(position_ids)
+        x = self.embeddings(x, position_ids)
         x = self.decoder(x, mask=mask)
         x = self.norm_out(x)
 
