@@ -7,6 +7,8 @@ run with torchrun or torch elastic
 
 import argparse
 import functools
+from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import torch
@@ -186,6 +188,16 @@ def main(args: SimpleNamespace):
                 print(generate(model, "She said ", tokenizer, device))
 
             dist.barrier()
+
+    # save trained model at end of training
+    dist.barrier()
+    states = model.state_dict()
+    if rank == 0:
+        checkpoint_dir = Path("checkpoints")
+        checkpoint_dir.mkdir(exist_ok=True)
+
+        save_id = "checkpoint-" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".pt"
+        torch.save(states, checkpoint_dir / save_id)
 
     cleanup_mp()
 

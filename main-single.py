@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 import argparse
+from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import torch
@@ -10,8 +12,8 @@ from tqdm import tqdm
 
 from data import GPT2Tokenizer, get_dataset, get_tokenizer, transform_dataset
 from models import TransformerDecoderLM
+from utils import generate, prepare_batch
 
-from utils import prepare_batch, generate
 
 def main(args: SimpleNamespace):
     PRINT_FREQ = 8
@@ -140,6 +142,13 @@ def main(args: SimpleNamespace):
             print(generate(model, "The big brown cat ", tokenizer, device))
             print(generate(model, "One day, ", tokenizer, device))
             print(generate(model, "She said ", tokenizer, device))
+
+    # save trained model at end of training
+    checkpoint_dir = Path("checkpoints")
+    checkpoint_dir.mkdir(exist_ok=True)
+
+    save_id = "checkpoint-" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".pt"
+    torch.save(model.state_dict(), checkpoint_dir / save_id)
 
 
 if __name__ == "__main__":
