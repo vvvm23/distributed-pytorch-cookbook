@@ -72,9 +72,9 @@ def build_pipeline(model: TransformerDecoderLM, num_stages: int):
     for i, (layers_so_far, layers_in_stage) for enumerate(zip(cum_layers_per_stage, layers_per_stage[1:-1])):
         mid_stages = model.decoder.layers[layers_so_far:layers_so_far+layers_in_stage]
 
-    first_stage = torch.nn.Sequential(*first_stage)
-    mid_stages = [torch.nn.Sequential(*stage) for stage in mid_stages]
-    last_stage = torch.nn.Sequential(*last_stage)
+    first_stage = torch.nn.Sequential(*first_stage).to("cuda:0")
+    mid_stages = [torch.nn.Sequential(*stage).to(f"cuda:{i+1}") for i, stage in enumerate(mid_stages)]
+    last_stage = torch.nn.Sequential(*last_stage).to(f"cuda:{num_stages-1}")
 
     return Pipe(torch.nn.Sequential(
         first_stage,
@@ -90,6 +90,8 @@ def main(args: SimpleNamespace):
     tokenizer = get_tokenizer()
     tokenizer.pad_token_id = 2
 
+    num_stages = torch.cuda.device_count()
+
     # initialise the GPT-style model
     model = TransformerDecoderLM(
         dim=args.dim,
@@ -98,8 +100,8 @@ def main(args: SimpleNamespace):
         num_layers=args.num_layers,
         vocab_size=tokenizer.vocab_size,
         max_position_embeddings=args.sequence_length,
-    ).to(device)
-
+    )
+    model = build_pipeline(model, num_stages=num_stages)
     model.train()
 
     # compile the model for faster speeds
@@ -157,10 +159,10 @@ def main(args: SimpleNamespace):
                 device_type="cuda", dtype=torch.bfloat16, enabled=not args.disable_amp
             ):
                 # get logits from model
-                logits = model(**batch)
+                logits = model(**batch).local_value()
 
                 # compute cross entropy loss (mask out padding)
-                logits, targets = logits.view(-1, model.vocab_size), targets.view(-1)
+                logits, targets = logits.view(-1, model.vocab_size), targets.to(f"cuda:{num_stages-1}").view(-1)
                 loss = F.cross_entropy(logits, targets, ignore_index=-100)
 
             # backwards pass (with optional gradients scaling) and parameter update
@@ -185,11 +187,11 @@ def main(args: SimpleNamespace):
             for i, batch in enumerate(pb):
                 batch, targets = prepare_batch(batch, tokenizer.pad_token_id, device)
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    logits = model(**batch)
+                    logits = model(**batch).local_value()
 
                     logits, targets = logits.view(-1, model.vocab_size), targets.view(
                         -1
-                    )
+                    ).to(f"cuda:{num_stages-1}")
                     loss = F.cross_entropy(logits, targets, ignore_index=-100)
 
                 # computes accuracy
@@ -211,6 +213,12 @@ def main(args: SimpleNamespace):
             print(generate(model, "One day, ", tokenizer, device))
             print(generate(model, "She said ", tokenizer, device))
 
+    # save trained model at end of training
+    checkpoint_dir = Path("checkpoints")
+    checkpoint_dir.mkdir(exist_ok=True)
+
+    save_id = "checkpoint-" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".pt"
+    torch.save(model.state_dict(), checkpoint_dir / save_id)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
